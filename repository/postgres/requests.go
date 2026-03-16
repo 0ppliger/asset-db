@@ -65,6 +65,7 @@ type execJob struct {
 	Args     pgx.NamedArgs
 	Ch       chan error
 	Callback func(tag pgconn.CommandTag) error
+	qquery   *pgx.QueuedQuery
 }
 
 func (w *execJob) GetCtx() context.Context {
@@ -93,17 +94,12 @@ func (w *execJob) Wait() error {
 }
 
 func (w *execJob) Queue(batch *pgx.Batch) {
-	batch.Queue(w.SQLText, w.Args)
+	w.qquery = batch.Queue(w.SQLText, w.Args)
 }
 
 func (w *execJob) Decode(br pgx.BatchResults) error {
-	tag, err := br.Exec()
-	if err != nil {
-		return wrapPgErr("batch decode", err)
-	}
-
 	if w.Callback != nil {
-		return w.Callback(tag)
+		w.qquery.Exec(w.Callback)
 	}
 	return nil
 }
@@ -127,6 +123,7 @@ type rowJob struct {
 	Args     pgx.NamedArgs
 	Ch       chan error
 	Callback func(pgx.Row) error
+	qquery   *pgx.QueuedQuery
 }
 
 func (r *rowJob) GetCtx() context.Context {
@@ -155,15 +152,14 @@ func (r *rowJob) Wait() error {
 }
 
 func (r *rowJob) Queue(batch *pgx.Batch) {
-	batch.Queue(r.SQLText, r.Args)
+	r.qquery = batch.Queue(r.SQLText, r.Args)
 }
 
 func (r *rowJob) Decode(br pgx.BatchResults) error {
-	row := br.QueryRow()
 	if r.Callback != nil {
-		return r.Callback(row)
+		r.qquery.QueryRow(r.Callback)
 	}
-	return row.Scan()
+	return nil
 }
 
 func (r *rowJob) RunTx(tx pgx.Tx) error {
@@ -185,6 +181,7 @@ type rowsJob struct {
 	Args     pgx.NamedArgs
 	Ch       chan error
 	Callback func(pgx.Rows) error
+	qquery   *pgx.QueuedQuery
 }
 
 func (r *rowsJob) GetCtx() context.Context {
@@ -213,14 +210,15 @@ func (r *rowsJob) Wait() error {
 }
 
 func (r *rowsJob) Queue(batch *pgx.Batch) {
-	batch.Queue(r.SQLText, r.Args)
+	r.qquery = batch.Queue(r.SQLText, r.Args)
 }
 
 func (r *rowsJob) Decode(br pgx.BatchResults) error {
-	rows, err := br.Query()
-	if err != nil {
-		return wrapPgErr("batch decode", err)
-	}
+	r.qquery.Query(r.callbackWrapper)
+	return nil
+}
+
+func (r *rowsJob) callbackWrapper(rows pgx.Rows) error {
 	defer rows.Close()
 
 	if r.Callback != nil {

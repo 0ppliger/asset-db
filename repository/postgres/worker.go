@@ -151,7 +151,7 @@ func NewWorkerWithPool(ctx context.Context, pool *pgxpool.Pool, cfg WorkerConfig
 	wctx, cancel := context.WithCancel(ctx)
 	w := &Worker{
 		pool:     pool,
-		cfg:      withDefaults(cfg),
+		cfg:      cfg,
 		queue:    queue.NewQueue(),
 		cancel:   cancel,
 		flushSem: make(chan struct{}, cfg.FlushParallelism),
