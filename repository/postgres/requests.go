@@ -19,10 +19,6 @@ type job interface {
 	GetArgs() pgx.NamedArgs
 	Done() chan error
 	Wait() error
-	// Methods for batching and decoding results:
-	Queue(*pgx.Batch)
-	Decode(pgx.BatchResults) error
-	// Tx-mode that support interactive execution
 	RunTx(pgx.Tx) error
 }
 
@@ -65,7 +61,6 @@ type execJob struct {
 	Args     pgx.NamedArgs
 	Ch       chan error
 	Callback func(tag pgconn.CommandTag) error
-	qquery   *pgx.QueuedQuery
 }
 
 func (w *execJob) GetCtx() context.Context {
@@ -93,17 +88,6 @@ func (w *execJob) Wait() error {
 	}
 }
 
-func (w *execJob) Queue(batch *pgx.Batch) {
-	w.qquery = batch.Queue(w.SQLText, w.Args)
-}
-
-func (w *execJob) Decode(br pgx.BatchResults) error {
-	if w.Callback != nil {
-		w.qquery.Exec(w.Callback)
-	}
-	return nil
-}
-
 func (w *execJob) RunTx(tx pgx.Tx) error {
 	tag, err := tx.Exec(w.Ctx, w.SQLText, w.Args)
 	if err != nil {
@@ -123,7 +107,6 @@ type rowJob struct {
 	Args     pgx.NamedArgs
 	Ch       chan error
 	Callback func(pgx.Row) error
-	qquery   *pgx.QueuedQuery
 }
 
 func (r *rowJob) GetCtx() context.Context {
@@ -151,17 +134,6 @@ func (r *rowJob) Wait() error {
 	}
 }
 
-func (r *rowJob) Queue(batch *pgx.Batch) {
-	r.qquery = batch.Queue(r.SQLText, r.Args)
-}
-
-func (r *rowJob) Decode(br pgx.BatchResults) error {
-	if r.Callback != nil {
-		r.qquery.QueryRow(r.Callback)
-	}
-	return nil
-}
-
 func (r *rowJob) RunTx(tx pgx.Tx) error {
 	row := tx.QueryRow(r.Ctx, r.SQLText, r.Args)
 
@@ -181,7 +153,6 @@ type rowsJob struct {
 	Args     pgx.NamedArgs
 	Ch       chan error
 	Callback func(pgx.Rows) error
-	qquery   *pgx.QueuedQuery
 }
 
 func (r *rowsJob) GetCtx() context.Context {
@@ -207,24 +178,6 @@ func (r *rowsJob) Wait() error {
 	case <-r.Ctx.Done():
 		return r.Ctx.Err()
 	}
-}
-
-func (r *rowsJob) Queue(batch *pgx.Batch) {
-	r.qquery = batch.Queue(r.SQLText, r.Args)
-}
-
-func (r *rowsJob) Decode(br pgx.BatchResults) error {
-	r.qquery.Query(r.callbackWrapper)
-	return nil
-}
-
-func (r *rowsJob) callbackWrapper(rows pgx.Rows) error {
-	defer rows.Close()
-
-	if r.Callback != nil {
-		return r.Callback(rows)
-	}
-	return nil
 }
 
 func (r *rowsJob) RunTx(tx pgx.Tx) error {

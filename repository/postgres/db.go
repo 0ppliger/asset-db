@@ -52,7 +52,6 @@ func New(dbtype, dsn string) (*PostgresRepository, error) {
 	}
 
 	wcfg := WorkerConfig{
-		TxMode:            true,
 		PoolMinConns:      1,
 		PoolMaxConns:      1,
 		MaxConnLifetime:   30 * time.Minute,

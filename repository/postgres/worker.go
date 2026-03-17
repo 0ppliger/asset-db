@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/caffix/queue"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,9 +28,6 @@ type Worker struct {
 
 // WorkerConfig controls batching and concurrency behavior.
 type WorkerConfig struct {
-	// TxMode enables wrapping each job in a transaction with savepoints for isolation.
-	TxMode bool
-
 	// PoolMinConns sets pgxpool MinConns. If 0, defaults to 0.
 	PoolMinConns int32
 
@@ -242,13 +238,8 @@ func (w *Worker) runAggregator(ctx context.Context) {
 			defer w.wg.Done()
 			defer func() { w.flushSem <- struct{}{} }()
 
-			f := w.flushBatch
-			if w.cfg.TxMode {
-				f = w.flushBatchTxSavepoints
-			}
-
 			for i := range 5 {
-				if err := f(ctx, jobs); err == nil {
+				if err := w.flushBatchTxSavepoints(ctx, jobs); err == nil {
 					break
 				} else if i == 4 {
 					errToJobs(err, jobs)
@@ -328,39 +319,6 @@ func (w *Worker) runAggregator(ctx context.Context) {
 			resetTimer()
 		}
 	}
-}
-
-func (w *Worker) flushBatch(ctx context.Context, items []job) error {
-	return w.pool.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
-		var jobs []job
-		var b pgx.Batch
-
-		// check for context expiration
-		for _, item := range items {
-			if err := item.GetCtx().Err(); err != nil {
-				item.Done() <- err
-				close(item.Done())
-				continue
-			}
-			jobs = append(jobs, item)
-		}
-
-		for _, job := range jobs {
-			job.Queue(&b)
-		}
-
-		sctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-
-		br := conn.SendBatch(sctx, &b)
-		defer func() { _ = br.Close() }()
-
-		for _, job := range jobs {
-			job.Done() <- job.Decode(br)
-			close(job.Done())
-		}
-		return nil
-	})
 }
 
 func (w *Worker) flushBatchTxSavepoints(ctx context.Context, items []job) error {
