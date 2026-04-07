@@ -19,10 +19,6 @@ type job interface {
 	GetArgs() pgx.NamedArgs
 	Done() chan error
 	Wait() error
-	// Methods for batching and decoding results:
-	Queue(*pgx.Batch)
-	Decode(pgx.BatchResults) error
-	// Tx-mode that support interactive execution
 	RunTx(pgx.Tx) error
 }
 
@@ -92,22 +88,6 @@ func (w *execJob) Wait() error {
 	}
 }
 
-func (w *execJob) Queue(batch *pgx.Batch) {
-	batch.Queue(w.SQLText, w.Args)
-}
-
-func (w *execJob) Decode(br pgx.BatchResults) error {
-	tag, err := br.Exec()
-	if err != nil {
-		return wrapPgErr("batch decode", err)
-	}
-
-	if w.Callback != nil {
-		return w.Callback(tag)
-	}
-	return nil
-}
-
 func (w *execJob) RunTx(tx pgx.Tx) error {
 	tag, err := tx.Exec(w.Ctx, w.SQLText, w.Args)
 	if err != nil {
@@ -154,18 +134,6 @@ func (r *rowJob) Wait() error {
 	}
 }
 
-func (r *rowJob) Queue(batch *pgx.Batch) {
-	batch.Queue(r.SQLText, r.Args)
-}
-
-func (r *rowJob) Decode(br pgx.BatchResults) error {
-	row := br.QueryRow()
-	if r.Callback != nil {
-		return r.Callback(row)
-	}
-	return row.Scan()
-}
-
 func (r *rowJob) RunTx(tx pgx.Tx) error {
 	row := tx.QueryRow(r.Ctx, r.SQLText, r.Args)
 
@@ -210,23 +178,6 @@ func (r *rowsJob) Wait() error {
 	case <-r.Ctx.Done():
 		return r.Ctx.Err()
 	}
-}
-
-func (r *rowsJob) Queue(batch *pgx.Batch) {
-	batch.Queue(r.SQLText, r.Args)
-}
-
-func (r *rowsJob) Decode(br pgx.BatchResults) error {
-	rows, err := br.Query()
-	if err != nil {
-		return wrapPgErr("batch decode", err)
-	}
-	defer rows.Close()
-
-	if r.Callback != nil {
-		return r.Callback(rows)
-	}
-	return nil
 }
 
 func (r *rowsJob) RunTx(tx pgx.Tx) error {
